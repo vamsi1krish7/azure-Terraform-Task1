@@ -1,0 +1,191 @@
+# =========================
+# PROVIDER CONFIGURATION
+# =========================
+terraform {
+  required_version = ">=1.3.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~>3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+# =========================
+# RESOURCE GROUP
+# =========================
+resource "azurerm_resource_group" "rg" {
+  name     = "task6-rg"
+  location = "East US"
+}
+
+# =========================
+# VIRTUAL NETWORK
+# =========================
+resource "azurerm_virtual_network" "vnet" {
+  name                = "task6-vnet"
+  address_space       = ["10.0.0.0/16"]
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+# =========================
+# SUBNET
+# =========================
+resource "azurerm_subnet" "subnet" {
+  name                 = "task6-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+# =========================
+# PUBLIC IP (ONLY FOR VM1)
+# =========================
+resource "azurerm_public_ip" "publicip" {
+  name                = "vm1-public-ip"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+# =========================
+# NETWORK SECURITY GROUP
+# =========================
+resource "azurerm_network_security_group" "nsg" {
+  name                = "task6-nsg"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  security_rule {
+    name                       = "Allow-SSH"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+# =========================
+# NSG ASSOCIATION
+# =========================
+resource "azurerm_subnet_network_security_group_association" "assoc" {
+  subnet_id                 = azurerm_subnet.subnet.id
+  network_security_group_id = azurerm_network_security_group.nsg.id
+}
+
+# =========================
+# NIC FOR VM1 (PUBLIC VM)
+# =========================
+resource "azurerm_network_interface" "nic1" {
+  name                = "vm1-nic"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.publicip.id
+  }
+}
+
+# =========================
+# NIC FOR VM2 (PRIVATE VM)
+# =========================
+resource "azurerm_network_interface" "nic2" {
+  name                = "vm2-nic"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.subnet.id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+# =========================
+# VM1 (BASTION / PUBLIC VM)
+# =========================
+resource "azurerm_linux_virtual_machine" "vm1" {
+  name                = "public-vm"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  size                = "Standard_B1s"
+  admin_username      = "azureuser"
+
+  network_interface_ids = [
+    azurerm_network_interface.nic1.id
+  ]
+
+  admin_password                  = "Password@1234"
+  disable_password_authentication = false
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+}
+
+# =========================
+# VM2 (PRIVATE VM)
+# =========================
+resource "azurerm_linux_virtual_machine" "vm2" {
+  name                = "private-vm"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  size                = "Standard_B1s"
+  admin_username      = "azureuser"
+
+  network_interface_ids = [
+    azurerm_network_interface.nic2.id
+  ]
+
+  admin_password                  = "Password@1234"
+  disable_password_authentication = false
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+}
+
+# =========================
+# OUTPUTS
+# =========================
+output "public_vm_ip" {
+  value = azurerm_public_ip.publicip.ip_address
+}
+
+output "private_vm_private_ip" {
+  value = azurerm_network_interface.nic2.private_ip_address
+}
+
+
+
+
